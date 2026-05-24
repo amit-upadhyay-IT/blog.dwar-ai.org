@@ -7,6 +7,9 @@ import starlightThemeVintage from 'starlight-theme-vintage';
 // https://astro.build/config
 export default defineConfig({
 	site: 'https://blog.dwar-ai.org', // Your actual domain
+	redirects: {
+		'/': '/b'
+	},
 	
 	integrations: [
 		starlight({
@@ -14,7 +17,7 @@ export default defineConfig({
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/withastro/starlight' }],
 			plugins: [
 				starlightThemeVintage(),
-				starlightBlog({ prefix: '' }),
+				starlightBlog({ prefix: 'b' }),
 			],
 			head: [
 				{
