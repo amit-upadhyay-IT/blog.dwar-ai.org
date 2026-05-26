@@ -38,6 +38,13 @@ export default defineConfig({
 			head: [
 				{
 					tag: 'script',
+					attrs: {
+						src: 'https://hypothes.is/embed.js',
+						async: true,
+					},
+				},
+				{
+					tag: 'script',
 					attrs: { type: 'module' },
 					content: `
 						import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
