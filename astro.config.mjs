@@ -3,6 +3,7 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightBlog from 'starlight-blog';
 import starlightThemeVintage from 'starlight-theme-vintage';
+import starlightGiscus from 'starlight-giscus';
 
 // https://astro.build/config
 export default defineConfig({
@@ -24,6 +25,14 @@ export default defineConfig({
 							name: 'Amit Upadhyay',
 						},
 					},
+				}),
+				starlightGiscus({
+					repo: 'amit-upadhyay-IT/blog.dwar-ai.org',
+					repoId: 'R_kgDOSmrjUw',
+					category: '[ENTER CATEGORY NAME HERE]',
+					categoryId: '[ENTER CATEGORY ID HERE]',
+					mapping: 'pathname',
+					theme: 'preferred_color_scheme',
 				}),
 			],
 			head: [
