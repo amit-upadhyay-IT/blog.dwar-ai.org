@@ -17,7 +17,14 @@ export default defineConfig({
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/withastro/starlight' }],
 			plugins: [
 				starlightThemeVintage(),
-				starlightBlog({ prefix: 'amit' }),
+				starlightBlog({
+					prefix: 'amit',
+					authors: {
+						amit: {
+							name: 'Amit Upadhyay',
+						},
+					},
+				}),
 			],
 			head: [
 				{

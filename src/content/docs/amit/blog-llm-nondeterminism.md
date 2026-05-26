@@ -1,7 +1,7 @@
 ---
 title: "Building Reliable Software on Top of Unreliable LLMs: A Deep Dive into Non-Determinism"
 date: 2026-05-24
-authors: Amit Upadhyay
+authors: amit
 ---
 
 > *This post draws from real engineering experience building a production CI pipeline that uses LLMs as a core processing component inside an automated, incremental analysis system. The pipeline runs on every commit, makes structural decisions using LLMs, synthesizes structured output, and publishes incremental diffs to object storage. Everything in this post comes from actual incidents, debugging sessions, and architectural decisions made while fighting non-determinism at production scale.*
