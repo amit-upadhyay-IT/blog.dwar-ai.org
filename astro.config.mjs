@@ -8,16 +8,16 @@ import starlightThemeVintage from 'starlight-theme-vintage';
 export default defineConfig({
 	site: 'https://blog.dwar-ai.org', // Your actual domain
 	redirects: {
-		'/': '/b'
+		'/': '/amit'
 	},
 	
 	integrations: [
 		starlight({
-			title: 'Dwar-AI Blog',
+			title: 'The Upadhyay Log',
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/withastro/starlight' }],
 			plugins: [
 				starlightThemeVintage(),
-				starlightBlog({ prefix: 'b' }),
+				starlightBlog({ prefix: 'amit' }),
 			],
 			head: [
 				{
