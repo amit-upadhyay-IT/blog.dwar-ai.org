@@ -29,8 +29,8 @@ export default defineConfig({
 				starlightGiscus({
 					repo: 'amit-upadhyay-IT/blog.dwar-ai.org',
 					repoId: 'R_kgDOSmrjUw',
-					category: '[ENTER CATEGORY NAME HERE]',
-					categoryId: '[ENTER CATEGORY ID HERE]',
+					category: 'Announcements',
+					categoryId: 'DIC_kwDOSmrjU84C95cr',
 					mapping: 'pathname',
 					theme: 'preferred_color_scheme',
 				}),
