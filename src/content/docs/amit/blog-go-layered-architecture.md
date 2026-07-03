@@ -1,5 +1,5 @@
 ---
-title: "Structure Your Go Service Before It Structures You"
+title: "The Go Layout I Hand to Every Coding Agent"
 date: 2026-06-03
 authors: amit
 ---
@@ -86,7 +86,7 @@ Each layer has one job. Here is what it owns, and what it is explicitly forbidde
 
 Each component in your service gets its own package with these four files:
 
-```
+```text
 internal/app/<component>/
   ├── transport.go    ← DI wiring
   ├── handler.go      ← input normalization + validation
@@ -96,7 +96,7 @@ internal/app/<component>/
 
 The repository implementations live separately:
 
-```
+```text
 internal/repository/
   ├── store/          ← Postgres repos
   ├── httpclient/     ← external HTTP APIs

@@ -1,0 +1,11 @@
+/* ─── Fix: code blocks overflow into the right sidebar ─────────────────────
+   Starlight's expressive-code blocks use overflow-x: auto on the <pre> but
+   the wrapping .expressive-code container has no max-width constraint, so
+   wide lines bleed into the "On this page" panel.
+   ─────────────────────────────────────────────────────────────────────────── */
+.expressive-code,
+.expressive-code figure,
+.expressive-code pre {
+  max-width: 100%;
+  overflow-x: auto;
+}
