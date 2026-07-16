@@ -1,6 +1,6 @@
 ---
 title: "Search Questions, Not Documents: Sharper Retrieval and Free Intent Classification"
-date: 2026-07-16
+date: 2026-05-29
 authors: amit
 ---
 
