@@ -1,0 +1,36 @@
+---
+import Default from '@astrojs/starlight/components/Sidebar.astro';
+
+// Starlight recently moved route data to Astro.locals instead of Astro.props
+const sidebar = Astro.locals.starlightRoute.sidebar || [];
+
+// Create a copy of the sidebar array
+const newSidebar = [...sidebar];
+
+// Check if the "About" link is already in the sidebar (it is on docs pages, but missing on blog pages)
+const hasAboutLink = newSidebar.some(
+  (item) => 
+    (item.type === 'link' && item.label === 'About Me') || 
+    (item.type === 'group' && item.label === 'About')
+);
+
+if (!hasAboutLink) {
+  // If it's missing, inject it at the top!
+  newSidebar.unshift({
+    type: 'link',
+    label: 'About Me',
+    href: '/about',
+    isCurrent: Astro.url.pathname === '/about' || Astro.url.pathname === '/about/',
+    badge: undefined,
+    attrs: {}
+  });
+}
+
+// Update the locals so the Default component renders our new sidebar array
+Astro.locals.starlightRoute = {
+  ...Astro.locals.starlightRoute,
+  sidebar: newSidebar
+};
+---
+
+<Default {...Astro.props} />

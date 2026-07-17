@@ -15,6 +15,9 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'The Upadhyay Log',
+			components: {
+				Sidebar: './src/components/Sidebar.astro',
+			},
 			customCss: ['./src/styles/custom.css'],
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/withastro/starlight' }],
 			plugins: [
@@ -82,6 +85,7 @@ export default defineConfig({
 				},
 			],
 			sidebar: [
+				{ label: '⬅ Back to Blog', link: '/amit' },
 				{
 					label: 'About',
 					items: [
