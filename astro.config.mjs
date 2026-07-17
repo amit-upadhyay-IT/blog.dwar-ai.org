@@ -24,6 +24,7 @@ export default defineConfig({
 					authors: {
 						amit: {
 							name: 'Amit Upadhyay',
+							url: 'https://blog.dwar-ai.org/about',
 						},
 					},
 				}),
