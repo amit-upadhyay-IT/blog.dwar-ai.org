@@ -13,7 +13,7 @@ authors: amit
 1. [The Problem: Why Fixed-Size Chunking Breaks](#1-the-problem)
 2. [Architecture](#2-architecture)
 3. [The Algorithm: Four Steps to Semantic Cuts](#3-the-algorithm)
-   - [Step 1: Embed Every Segment](#step-1--embed-every-segment)
+   - [Step 1: Embed Every Atom](#step-1--embed-every-atom)
    - [Step 2: Smooth with Neighbors](#step-2--smooth-with-neighbors)
    - [Step 3: Compute the Distance Curve](#step-3--compute-the-distance-curve)
    - [Step 4: Cut at the Valleys](#step-4--cut-at-the-valleys)
@@ -21,8 +21,7 @@ authors: amit
 5. [The Infra Layer: pgvector, halfvec, and Idempotent Stages](#5-the-infra-layer)
 6. [The Go + Python Boundary](#6-the-go--python-boundary)
 7. [Testing Pure Logic Without Mocks](#7-testing-pure-logic-without-mocks)
-8. [Handling Bilingual (Hinglish) Text](#8-handling-bilingual-hinglish-text)
-9. [Key Takeaways](#9-key-takeaways)
+8. [Summary](#8-summary)
 
 ---
 
@@ -37,7 +36,7 @@ Consider any long-form audio recording like a podcast, a lecture series, or an i
 "Aur yahi baat hai jo Western psychology abhi begin kar rahi hai samajhna."
 ```
 
-Now imagine splitting that with `chunk_size=512, overlap=50`. You will get cuts in the middle of thoughts, one half of a complete argument on each side of a boundary, and Hindi and English fragments mixed in ways that confuse the retriever.
+Now imagine splitting that with `chunk_size=512, overlap=50`. You will get cuts in the middle of thoughts, leaving one half of a complete argument on each side of a boundary. Instead of coherent ideas, you get syntactically broken, incomplete fragments that degrade embedding quality and confuse the retriever.
 
 The core problem with fixed-size chunking is that **it is blind to meaning**. It knows characters and tokens. It does not know when the speaker finishes one idea and starts another.
 
@@ -51,12 +50,21 @@ graph LR
 
 Chunks that track *ideas*, not byte offsets.
 
+> **What is an "atom"?**
+> An atom is our smallest indivisible unit of text—typically a single complete sentence or a discrete speech utterance. By operating on whole atoms, we ensure a sentence is never chopped in half.
+> 
+> For example, in the bilingual transcript above:
+> - **Atom 0:** `"Iska matlab hai, the observer and the observed are not two things."`
+> - **Atom 1:** `"Jab tum sach mein dekh rahe ho, toh observer hi observation ban jata hai."`
+> 
+> No matter the chunk size limits, these atoms remain fully intact. They may be grouped together or separated at a semantic boundary, but they will never be split down the middle.
+
 ---
 
 
 ## 2. Architecture
 
-The system uses a strict four-layer architecture for every component:
+To keep the core chunking algorithm isolated and testable without a database or GPU, you can use a strict four-layer architecture for your components:
 
 ```mermaid
 graph TD
@@ -71,25 +79,7 @@ graph TD
     style R fill:#1a2e1a,color:#fff
 ```
 
-**Key constraint**: interfaces are declared in the **usecase** (`EmbedClient`, `SegmentReader`, `Store`), not in the repository. This means:
-
-- The usecase is testable without a real database or GPU worker
-- Repository implementations can be swapped (real BGE, stub, mock) without touching business logic
-- The `domain` package is a **neutral leaf** imported by both sides, importing nothing from `internal/`
-
-```mermaid
-graph LR
-    domain["domain/\n(File, Segment, Chunk, Span)\nleaf, imports nothing"]
-    app["app/chunk/\nusecase, boundary, guards"]
-    repo["repository/\nstore, mlclient"]
-
-    app -->|"type aliases\ne.g. Chunk = domain.Chunk"| domain
-    repo -->|"implements interfaces\ndeclared in app"| domain
-
-    style domain fill:#2d1b69,color:#fff
-```
-
-The `chunk` package type-aliases `domain.Chunk` (e.g., `type Chunk = domain.Chunk`) so each component presents a clean per-component model surface, while the underlying types remain identical across the boundary. This is how a single `store.ChunkRepo` can satisfy interfaces declared in both `chunk` and `embed` without circular imports.
+By keeping the pure business logic in the `usecase` layer, the semantic chunking algorithm can be tested independently of Postgres or the embedding model.
 
 ---
 
@@ -99,8 +89,8 @@ Here is the full chunking flow for one text block:
 
 ```mermaid
 flowchart TD
-    A["Text block\n(e.g., monolingual corpus segment, sentences 0..N)"]
-    B["Embed each segment\nBGE-M3 → 1024-d vectors"]
+    A["Text block\n(a collection of atoms 0..N)"]
+    B["Embed each atom\nBGE-M3 → 1024-d vectors"]
     C["Smooth with ±1 neighbors\nre-normalize"]
     D["Compute consecutive\ncosine distances"]
     E["Detect valley cuts\n@ p92 percentile threshold"]
@@ -111,9 +101,9 @@ flowchart TD
     A --> B --> C --> D --> E --> F --> G --> H
 ```
 
-### Step 1: Embed Every Segment
+### Step 1: Embed Every Atom
 
-Each text segment (one sentence or passage) is embedded via **BGE-M3**, a multilingual 1024-dimensional dense encoder that handles Hindi, English, and Hinglish in the same vector space.
+Each **atom** (a single sentence or distinct utterance) is embedded via **BGE-M3**, a multilingual 1024-dimensional dense encoder that handles Hindi, English, and Hinglish in the same vector space.
 
 ```go
 // usecase.go
@@ -128,8 +118,8 @@ sequenceDiagram
     participant Worker as pyworker /embed
     participant BGE as BGE-M3 (GPU)
 
-    Go->>Worker: POST /embed {texts: [...N sentences...], normalize: true}
-    Worker->>BGE: FlagModel.encode(sentences, batch_size=16)
+    Go->>Worker: POST /embed {texts: [...N atoms...], normalize: true}
+    Worker->>BGE: FlagModel.encode(atoms, batch_size=16)
     BGE-->>Worker: float32[N][1024] dense vectors
     Worker-->>Go: {embeddings: [[...], ...]}
 ```
@@ -148,13 +138,16 @@ def get_bge():
     return _bge_model
 ```
 
-If `PYWORKER_STUB=1` is set, the worker returns **deterministic stubs**, meaning the Go pipeline runs fully end-to-end without a GPU or model weights. This is critical for local development and CI.
-
 ---
 
 ### Step 2: Smooth with Neighbors
 
-Raw per-sentence embeddings are noisy. A single noisy or off-topic sentence can spike a distance value falsely. We reduce noise by replacing each segment's vector with the **mean of itself and its ±1 neighbors**, then re-normalizing to unit length:
+Raw per-sentence embeddings are noisy. A single noisy or off-topic sentence can spike a distance value falsely. 
+
+> **Why smooth?** 
+> When people speak naturally, they often throw in brief, off-topic fillers (e.g., *"Hold on, let me take a sip of water"*). If we don't smooth the vectors, this single sentence creates a massive distance "spike," tricking the algorithm into cutting the chunk in half. By averaging it with its neighbors, we pull that outlier back toward the main topic and prevent a false cut.
+
+We reduce this noise by replacing each atom's vector with the **mean of itself and its ±1 neighbors**, then re-normalizing to unit length:
 
 ```go
 // boundary.go
@@ -421,7 +414,9 @@ graph TD
 
 ## 7. Testing Pure Logic Without Mocks
 
-Because the algorithm (`boundary.go`, `guards.go`) is **pure logic** with no I/O or interfaces, it is directly unit-testable with table-driven tests. No mocks, no test databases, no running workers.
+By designing your core algorithm (valley detection and size guards) as **pure logic** with no I/O or database dependencies, testing becomes incredibly easy. You don't need mocks, test databases, or running API workers. You just pass in arrays of numbers and assert the exact output.
+
+For example, testing the valley detection logic is as simple as:
 
 ```go
 // boundary_test.go
@@ -447,19 +442,19 @@ func TestApplySizeGuards_MergeDirectionMoreSimilar(t *testing.T) {
 }
 ```
 
-The test suite covers:
+When building your own system, you can easily create a comprehensive test suite to cover all edge cases without any complex setup:
 
 ```mermaid
 mindmap
   root((Test coverage))
-    boundary.go
+    Valley Detection
       L2 normalization
       Cosine distance: identical vectors
       Cosine distance: orthogonal vectors
       Percentile at edges
       Valley detection at known spike
       Smoothing re-normalization invariant
-    guards.go
+    Size Guards
       Span building from cuts
       Edge cuts ignored
       Merge undersize
@@ -469,34 +464,11 @@ mindmap
       Single unsplittable atom exception
 ```
 
-All tests run with `go test ./...` with no setup, services, or network.
+This ensures your chunking logic is perfectly reliable before it ever touches a real database or embedding model.
 
 ---
 
-## 8. Handling Bilingual (Hinglish) Text
-
-The chunker processes text blocks independently. A bilingual text corpus, where the author switches freely between Hindi and English, is first split into language blocks. Each block is then chunked separately:
-
-```mermaid
-graph TD
-    File["Bilingual text corpus\n(Hindi + English mixed)"]
-    Route["language detection\nsplit into monolingual blocks"]
-    HI["Hindi block\nsentences 0..187"]
-    EN["English block\nsentences 0..94"]
-    ChunkHI["Chunk Hindi block\nBGE-M3 in Hindi latent space"]
-    ChunkEN["Chunk English block\nBGE-M3 in English latent space"]
-    Out["Each chunk: seq_index + core text\nposition-anchored retrieval"]
-
-    File --> Route
-    Route --> HI --> ChunkHI --> Out
-    Route --> EN --> ChunkEN --> Out
-```
-
-By chunking within a language block, the cosine-distance valleys reflect **semantic shifts within one language**, not spurious jumps caused by switching languages. A Hindi→English transition is a *language* change handled upstream. Chunking sees clean monolingual (or consistent Hinglish) text.
-
----
-
-## 9. Summary
+## 8. Summary
 
 ```mermaid
 mindmap
@@ -509,8 +481,6 @@ mindmap
       Two-pass size guards
     Architecture
       Pure logic separated from I/O
-      Interfaces declared at call site
-      Domain neutral leaf package
       Idempotent pipeline stages
     Infra
       pgvector halfvec for two models
@@ -534,6 +504,3 @@ mindmap
 
 6. **Design stub mode in from day one.** A Python embedding sidecar with a stub fallback (`PYWORKER_STUB=1`) makes local development as fast as any pure-Go project. Do not bolt it on later.
 
----
-
-*The full pipeline source, including the chunking algorithm, size guards, routing changepoint, and the Go/Python HTTP contract, is available at [github.com/amit-upadhyay-IT/dwar-ai-spritual-rag](https://github.com/amit-upadhyay-IT/dwar-ai-spritual-rag).*
