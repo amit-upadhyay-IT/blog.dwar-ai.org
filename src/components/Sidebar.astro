@@ -22,7 +22,9 @@ if (!hasAboutLink) {
     href: '/about',
     isCurrent: Astro.url.pathname === '/about' || Astro.url.pathname === '/about/',
     badge: undefined,
-    attrs: {}
+    attrs: {
+      class: 'about-me-link'
+    }
   });
 }
 
