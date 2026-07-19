@@ -17,10 +17,11 @@ authors: amit
 4. [Path 2: Matryoshka Truncation](#4-path-2-matryoshka-truncation)
 5. [Path 3: halfvec Quantization](#5-path-3-halfvec-quantization)
 6. [Side-by-Side Comparison](#6-side-by-side-comparison)
-7. [The Decision Framework](#7-the-decision-framework)
-8. [The Domain Nuance Problem](#8-the-domain-nuance-problem)
-9. [What Silent Degradation Actually Looks Like](#9-what-silent-degradation-actually-looks-like)
-10. [Prove It: The Gold Standard Eval Loop](#10-prove-it-the-gold-standard-eval-loop)
+7. [What It Actually Costs: RAM and Cloud Pricing](#7-what-it-actually-costs-ram-and-cloud-pricing)
+8. [The Decision Framework](#8-the-decision-framework)
+9. [The Domain Nuance Problem](#9-the-domain-nuance-problem)
+10. [What Silent Degradation Actually Looks Like](#10-what-silent-degradation-actually-looks-like)
+11. [Prove It: The Gold Standard Eval Loop](#11-prove-it-the-gold-standard-eval-loop)
 
 ---
 
@@ -81,9 +82,7 @@ Each one has a legitimate place. The mistake is picking one by default, without 
 
 ## 3. Path 1: No Optimization
 
-> **Ask yourself first:** is my dataset actually big enough to justify this?
-
-Choosing not to optimize is a real architectural decision. It's not laziness. Sometimes it's the right call.
+Choosing not to optimize is a real architectural decision. It's not laziness. Sometimes it's the right call. But two things can independently force you off it — dataset size, and your vector DB's own constraints.
 
 ### The math
 
@@ -95,22 +94,57 @@ xychart-beta
     bar [0.04, 0.2, 0.4, 2, 4, 40]
 ```
 
-100,000 chunks, roughly a corpus of 500 books, costs **400 MB** unoptimized. That fits in a `db.t3.medium`. You don't need to do anything.
+100,000 chunks, roughly a corpus of 500 books, costs **400 MB** unoptimized. That fits in a `db.t3.medium`. Memory alone isn't a reason to optimize until you're well past 1M chunks.
 
-The point where "no optimization" starts to genuinely hurt is around **5M+ chunks** for 1024-dim models, or **2M+ chunks** for 3072-dim models. Below that, you're probably optimizing for a problem you don't have yet.
+### Two things that force your hand
+
+```mermaid
+flowchart TD
+    START["Considering No Optimization\n32-bit full vectors, all dimensions"]
+
+    START --> MEM{"Memory pressure?\nOver 2M chunks at 3072-dim\nOver 5M chunks at 1024-dim"}
+    START --> DB{"pgvector HNSW limit?\nvector type blocks HNSW\nif dims exceed 2000"}
+
+    MEM -->|No| MEMOK["Memory: not a problem yet"]
+    MEM -->|Yes| MEMFORCE["Optimize for memory\nhalfvec or Matryoshka"]
+
+    DB -->|Dims under 2000| DBOK["DB indexing: OK"]
+    DB -->|3072-dim model + pgvector| MRLQ{"Model trained\nwith MRL?"}
+
+    MRLQ -->|No| HALFVEC["halfvec only option\nKeep 3072 dims, 16-bit precision\nvector(3072) HNSW is blocked"]
+    MRLQ -->|Yes| BOTH["Two valid escapes:\nA. halfvec(3072): keep dims, 16-bit\nB. Truncate to 768: keep 32-bit, under 2000"]
+
+    MEMOK --> SAFE["No Optimization is valid"]
+    DBOK --> SAFE
+
+    style SAFE fill:#065f46,stroke:#047857,color:#fff
+    style MEMFORCE fill:#92400e,stroke:#B45309,color:#fff
+    style HALFVEC fill:#5c1a1a,stroke:#7c2929,color:#fff
+    style BOTH fill:#1D4ED8,stroke:#1e3a8a,color:#fff
+```
+
+When you hit the pgvector HNSW wall with a 3,072-dim model, you actually have two exits depending on whether your model supports MRL:
+
+- **`halfvec` (always available):** keep all 3,072 dimensions, drop float precision to 16-bit. The vector shape is intact, just less decimal resolution. Works with any model.
+- **Matryoshka truncation to under 2,000 dims (MRL models only):** keep full 32-bit floats, but trim dimensions down to e.g. 768. Now you're back under the HNSW limit with no precision loss at all. Only valid for `gemini-embedding-002` or OpenAI's `text-embedding-3` family.
+
+So the HNSW block isn't a "use halfvec, end of story." It's a forcing function that eliminates "do nothing," but it still leaves you a choice between losing depth (halfvec) or losing width (Matryoshka) — the same tradeoff from sections 4 and 5, just now driven by the DB constraint rather than memory.
+
 
 ### When to use it
 
-- Under 1M chunks
-- No hard RAM budget
-- Retrieval quality is what you're measured on
+- Under 1M chunks with no hard RAM budget
+- Your embedding dimension is under 2,000, or you're on a DB without the HNSW dim cap
+- Retrieval quality is the primary metric
 - You want nothing extra to debug
 
 ### My rule
 
-> If you don't have a real constraint, don't manufacture one. Every optimization layer is a debugging surface you'll have to explain at 2am when retrieval breaks.
+> If you don't have a real constraint, don't manufacture one. But check your DB's dimension limits before assuming you have none.
 
 ---
+
+
 
 ## 4. Path 2: Matryoshka Truncation
 
@@ -245,7 +279,71 @@ flowchart LR
 
 ---
 
-## 7. The Decision Framework
+## 7. What It Actually Costs: RAM and Cloud Pricing
+
+Knowing which strategy to pick is one thing. Knowing what you're paying for each option is what makes the argument in a planning doc or a cloud budget review.
+
+The formula is the same regardless of strategy:
+
+```mermaid
+flowchart LR
+    DIMS["Dimensions\ne.g. 3072"]
+    PREC["Float precision\nvector: 4 bytes\nhalfvec: 2 bytes"]
+    CHUNKS["Chunk count\ne.g. 1M"]
+    HNSW["HNSW overhead\n~2x multiplier"]
+
+    DIMS --> PERVEC["Per-vector size\n3072 x 4 bytes = 12 KB"]
+    PREC --> PERVEC
+    PERVEC --> RAW["Raw total\n1M x 12 KB = 12 GB"]
+    CHUNKS --> RAW
+    RAW --> TOTAL["RAM needed\n12 GB x 2 = 24 GB"]
+    HNSW --> TOTAL
+
+    style TOTAL fill:#5c1a1a,stroke:#7c2929,color:#fff
+    style PERVEC fill:#374151,stroke:#9CA3AF,color:#fff
+    style RAW fill:#374151,stroke:#9CA3AF,color:#fff
+```
+
+The HNSW index roughly doubles your raw vector storage in RAM. It has to — the graph structure that makes approximate nearest-neighbour search fast needs to live in memory too.
+
+### How strategy changes your RAM at the same corpus size
+
+```mermaid
+xychart-beta
+    title "RAM needed at 1M chunks, with HNSW (approx)"
+    x-axis ["No opt 3072-dim", "halfvec 3072-dim", "MRL 768-dim 32-bit"]
+    y-axis "RAM (GB)" 0 --> 28
+    bar [24, 12, 6]
+```
+
+| Strategy | Per vector | 1M chunks raw | With HNSW (~2x) | Saving vs baseline |
+|---|---|---|---|---|
+| No opt (3072-dim, 32-bit) | 12 KB | 12 GB | ~24 GB | baseline |
+| halfvec (3072-dim, 16-bit) | 6 KB | 6 GB | ~12 GB | 50% |
+| MRL truncated (768-dim, 32-bit) | 3 KB | 3 GB | ~6 GB | 75% |
+
+### What that RAM requirement means in cloud dollars
+
+For managed PostgreSQL with pgvector (AWS RDS, GCP Cloud SQL), the instance must hold the full HNSW index in RAM. If it can't, queries fall back to disk. The instance tier is the cost you're committing to.
+
+| RAM needed | AWS RDS instance | ~Monthly | GCP Cloud SQL instance | ~Monthly |
+|---|---|---|---|---|
+| Up to 8 GB | db.r6g.large (16 GB) | $190 | db-highmem-2 (13 GB) | $130 |
+| Up to 16 GB | db.r6g.large (16 GB) | $190 | db-highmem-4 (26 GB) | $250 |
+| Up to 32 GB | db.r6g.xlarge (32 GB) | $380 | db-highmem-4 (26 GB) | $250 |
+| Up to 64 GB | db.r6g.2xlarge (64 GB) | $760 | db-highmem-8 (52 GB) | $500 |
+| Up to 128 GB | db.r6g.4xlarge (128 GB) | $1,520 | db-highmem-16 (104 GB) | $1,000 |
+| Up to 256 GB | db.r6g.8xlarge (256 GB) | $3,040 | db-highmem-32 (208 GB) | $2,000 |
+
+*Approximate on-demand rates, us-east-1 / us-central1. Reserved instances cut this 30-40%.*
+
+To make it concrete: **1M chunks at 3,072-dim with no optimization needs ~24 GB, which lands you on a ~$380/month AWS instance.** Switch to `halfvec` and the same corpus fits on the $190/month tier. Switch to Matryoshka at 768 dims and it fits comfortably within 8 GB — the cheapest tier available.
+
+That's the real cost of the choice. Not just bytes saved, but the billing tier your database has to live on.
+
+---
+
+## 8. The Decision Framework
 
 Here's the tree I walk through when I'm making this call for any new system.
 
@@ -285,7 +383,7 @@ Two things worth highlighting:
 
 ---
 
-## 8. The Domain Nuance Problem
+## 9. The Domain Nuance Problem
 
 This is the variable I see underestimated most often, and it's the one that actually hurts people in production.
 
@@ -324,7 +422,7 @@ This isn't an accuracy problem. It's a precision problem. Recall stays high; the
 
 ---
 
-## 9. What Silent Degradation Actually Looks Like
+## 10. What Silent Degradation Actually Looks Like
 
 Most teams don't catch vector optimization errors before production. Here's the actual pattern:
 
@@ -351,7 +449,7 @@ The problem with "run a few queries and check" is that you're testing with broad
 
 ---
 
-## 10. Prove It: The Gold Standard Eval Loop
+## 11. Prove It: The Gold Standard Eval Loop
 
 Before shipping any optimization, you need one thing: a number. Not a vibe. A measurement that tells you whether the tradeoff is acceptable.
 
